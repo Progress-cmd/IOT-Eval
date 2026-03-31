@@ -1,0 +1,20 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: rabbitmq
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASS}
+
+  php:
+    build: .
+    container_name: php-rabbitmq
+    volumes:
+      - .:/app
+    depends_on:
+      - rabbitmq
+    tty: true
+    stdin_open: true
