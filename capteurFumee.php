@@ -1,58 +1,54 @@
 <?php
 require_once __DIR__ . '/vendor/autoload.php';
 
-use PhpAmqpLib\Connection\AMQPStreamConnection;
-use PhpAmqpLib\Message\AMQPMessage;
+use PhpMqtt\Client\MqttClient;
+use PhpMqtt\Client\ConnectionSettings;
 
-// Connexion au serveur RabbitMQ
-$connection = new AMQPStreamConnection('localhost', 5672, 'capteur-user', 'capteur123');
-$channel = $connection->channel();
+// Connexion au broker RabbitMQ via MQTT (port 1883)
+$mqtt = new MqttClient('localhost', 1883, 'capteur-fumee-producer');
 
-// Declaration du Topic Exchange "domotique"
-// Les parametres : nom, type, passive, durable, auto_delete
-//$channel->exchange_declare('domotique', 'topic', false, true, false);
+$settings = (new ConnectionSettings)
+    ->setUsername('capteur-user')
+    ->setPassword('capteur123');
 
-echo "[*] Producer demarre. Envoi de messages toutes les 3 secondes...\n";
-echo "[*] Appuyez sur Ctrl+C pour arreter.\n\n";
+$mqtt->connect($settings, true);
 
-$capteur_fumee = [
+echo "[*] Producer fumée démarré (MQTT). Envoi toutes les 3 secondes...\n";
+echo "[*] Appuyez sur Ctrl+C pour arrêter.\n\n";
 
-[
-    'routing_key' => 'maison.cuisine.fumee',
-    'sensor' => 'fumee',
-    'room' => 'cuisine',
-    // Genere un niveau de fumee entre 0 et 100
-    'value_fn' => function () {
-        return mt_rand(0, 100);
-        ''
-    },
-],
-];
+// Fonction pour déterminer la sévérité selon le sujet
+function getSeveriteFumee(int $value):string {
+    if ($value > 70) {
+        return 'critical';
+    }
+    return 'info'; // Pas de warning pour la fumée selon le sujet
+}
+
 while (true) {
+    // On génère la valeur une seule fois
+    $value = mt_rand(0, 100);
+    $severity = getSeveriteFumee($value);
 
-    // Construction du message en JSON
+    // Construction du message JSON
     $data = [
-        'sensor' => $capteur_fumee['sensor'],
-        'value' => ($capteur_fumee['value_fn'])(),
-        'room' => $capteur_fumee['room'],
+        'sensor'    => 'fumee',
+        'value'     => $value,
+        'room'      => 'cuisine',
         'timestamp' => date('c'),
-        'severity' => ($capteur_fumee['value_fn'])() > 70 ? 'high' : 'normal', // Niveau de gravite en fonction de la valeur
+        'severity'  => $severity,
     ];
 
     $message = json_encode($data);
 
-    // Publication du message sur l'exchange avec la routing key
-    $msg = new AMQPMessage($message, [
-        'content_type' => 'application/json',
-    ]);
-    $channel->basic_publish($msg, 'domotique', $capteur_fumee['routing_key']);
+    // Routing key dynamique selon la sévérité : alert.<severity>.<sensor>
+    // Permet au Topic Exchange de filtrer par niveau
+    $topic = "alert.{$severity}.fumee";
 
-    echo "[x] Envoye {$capteur_fumee['routing_key']}: $message\n";
+    $mqtt->publish($topic, $message, 0);
 
-    // Pause de 3 secondes entre chaque envoi
+    echo "[x] Envoyé sur '{$topic}': {$message}\n";
+
     sleep(3);
 }
 
-// Fermeture propre (jamais atteint dans la boucle infinie)
-$channel->close();
-$connection->close();
+$mqtt->disconnect();
